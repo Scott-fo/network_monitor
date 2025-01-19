@@ -5,6 +5,8 @@ const os = std.os;
 const headers = @import("headers.zig");
 const EthernetHeader = headers.EthernetHeader;
 const MacAddress = headers.MacAddress;
+const IPv4Header = headers.IPv4Header;
+const IPv4Address = headers.IPv4Address;
 
 const ETH_P_ALL = 0x0003;
 const ETH_P_IP = 0x0800;
@@ -35,7 +37,41 @@ const ParsedEthernet = struct {
     }
 };
 
+const ParsedIpv4 = struct {
+    const Self = @This();
+
+    header: IPv4Header,
+    payload: []const u8,
+
+    pub fn init(buffer: []const u8) ?Self {
+        if (buffer.len < @sizeOf(IPv4Header)) {
+            return null;
+        }
+
+        const src_addr = IPv4Address{ .address = buffer[12..16].* };
+        const dest_addr = IPv4Address{ .address = buffer[16..20].* };
+
+        return Self{
+            .header = .{
+                .version_ihl = buffer[0],
+                .tos = buffer[1],
+                .total_length = std.mem.readInt(u16, buffer[2..4], .big),
+                .id = std.mem.readInt(u16, buffer[4..6], .big),
+                .flags_fragment = std.mem.readInt(u16, buffer[6..8], .big),
+                .ttl = buffer[8],
+                .protocol = buffer[9],
+                .checksum = std.mem.readInt(u16, buffer[10..12], .big),
+                .src_addr = src_addr,
+                .dest_addr = dest_addr,
+            },
+            .payload = buffer[@sizeOf(IPv4Header)..],
+        };
+    }
+};
+
 const PacketStats = struct {
+    const Self = @This();
+
     total_packets: usize,
     total_bytes: usize,
     ipv4_packets: usize,
@@ -44,7 +80,7 @@ const PacketStats = struct {
     udp_packets: usize,
     other_packets: usize,
 
-    pub fn show(self: *const PacketStats) void {
+    pub fn show(self: *const Self) void {
         print("\nPacket Stats:\n", .{});
         print("Total Packets: {d}\n", .{self.total_packets});
         print("Total Bytes: {d}\n", .{self.total_bytes});
@@ -53,6 +89,18 @@ const PacketStats = struct {
         print("TCP Packets: {d}\n", .{self.tcp_packets});
         print("UDP Packets: {d}\n", .{self.udp_packets});
         print("Other Packets: {d}\n", .{self.other_packets});
+    }
+
+    pub fn init() Self {
+        return .{
+            .total_packets = 0,
+            .total_bytes = 0,
+            .ipv4_packets = 0,
+            .ipv6_packets = 0,
+            .tcp_packets = 0,
+            .udp_packets = 0,
+            .other_packets = 0,
+        };
     }
 };
 
@@ -78,15 +126,7 @@ pub const NetworkMonitor = struct {
         return Self{
             .socket = socket,
             .allocator = gpa,
-            .stats = .{
-                .total_packets = 0,
-                .total_bytes = 0,
-                .ipv4_packets = 0,
-                .ipv6_packets = 0,
-                .tcp_packets = 0,
-                .udp_packets = 0,
-                .other_packets = 0,
-            },
+            .stats = PacketStats.init(),
             .running = false,
         };
     }
@@ -116,27 +156,27 @@ pub const NetworkMonitor = struct {
             return;
         }
 
-        const ether_type = std.mem.bigToNative(
-            u16,
-            ethernet.?.header.ether_type,
-        );
+        const ether_type = ethernet.?.header.ether_type;
 
         self.stats.total_packets += 1;
         self.stats.total_bytes += buffer.len;
 
-        const payload = buffer[@sizeOf(EthernetHeader)..];
-        _ = payload;
+        // print("EtherType: 0x{X:0>4}\n", .{ether_type});
 
         switch (ether_type) {
             ETH_P_IP => {
                 self.stats.ipv4_packets += 1;
+                if (ParsedIpv4.init(ethernet.?.payload)) |ipv4| {
+                    print("From IP: {}\n", .{ipv4.header.src_addr});
+                    print("To IP: {}\n", .{ipv4.header.dest_addr});
+                }
             },
             else => {
                 self.stats.other_packets += 1;
             },
         }
 
-        print("From: {}\n", .{ethernet.?.header.src_mac});
-        print("To: {}\n", .{ethernet.?.header.dest_mac});
+        // print("From: {}\n", .{ethernet.?.header.src_mac});
+        // print("To: {}\n", .{ethernet.?.header.dest_mac});
     }
 };

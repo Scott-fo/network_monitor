@@ -2,7 +2,7 @@ pub const MacAddress = extern struct {
     address: [6]u8,
 };
 
-const Ipv4Address = extern struct {
+pub const IPv4Address = extern struct {
     address: [4]u8,
 };
 
@@ -21,8 +21,8 @@ pub const IPv4Header = extern struct {
     ttl: u8,
     protocol: u8,
     checksum: u16,
-    src_addr: Ipv4Address,
-    dest_addr: Ipv4Address,
+    src_addr: IPv4Address,
+    dest_addr: IPv4Address,
 
     pub fn get_header_length(self: *const IPv4Header) u8 {
         return (self.version_ihl & 0x0F) * 4;
