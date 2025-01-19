@@ -1,10 +1,18 @@
-const EthernetHeader = packed struct {
-    dest_mac: [6]u8,
-    src_mac: [6]u8,
+pub const MacAddress = extern struct {
+    address: [6]u8,
+};
+
+const Ipv4Address = extern struct {
+    address: [4]u8,
+};
+
+pub const EthernetHeader = extern struct {
+    dest_mac: MacAddress,
+    src_mac: MacAddress,
     ether_type: u16,
 };
 
-const IPv4Header = packed struct {
+pub const IPv4Header = extern struct {
     version_ihl: u8,
     tos: u8,
     total_length: u16,
@@ -13,15 +21,15 @@ const IPv4Header = packed struct {
     ttl: u8,
     protocol: u8,
     checksum: u16,
-    src_addr: u32,
-    dest_addr: u32,
+    src_addr: Ipv4Address,
+    dest_addr: Ipv4Address,
 
     pub fn get_header_length(self: *const IPv4Header) u8 {
         return (self.version_ihl & 0x0F) * 4;
     }
 };
 
-const TcpHeader = packed struct {
+pub const TcpHeader = extern struct {
     src_port: u16,
     dest_port: u16,
     sequence: u32,
@@ -33,7 +41,7 @@ const TcpHeader = packed struct {
     urgent: u16,
 };
 
-const UdpHeader = packed struct {
+pub const UdpHeader = extern struct {
     src_port: u16,
     dest_port: u16,
     length: u16,
