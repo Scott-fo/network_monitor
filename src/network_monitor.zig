@@ -13,8 +13,14 @@ const UdpHeader = headers.UdpHeader;
 const port = @import("port.zig");
 const Protocol = port.Protocol;
 
+const connection = @import("connection.zig");
+const Connection = connection.Connection;
+const ConnectionId = connection.ConnectionId;
+
 const ETH_P_ALL = 0x0003;
 const ETH_P_IP = 0x0800;
+
+const CONNECTION_TIMEOUT_SECS = 30;
 
 const ParsedEthernet = struct {
     const Self = @This();
@@ -167,6 +173,7 @@ pub const NetworkMonitor = struct {
     allocator: std.mem.Allocator,
     stats: PacketStats,
     running: bool,
+    connections: std.AutoHashMap(ConnectionId, Connection),
 
     pub fn init(gpa: std.mem.Allocator) !Self {
         if (@import("builtin").os.tag != .linux) {
@@ -184,29 +191,39 @@ pub const NetworkMonitor = struct {
             .allocator = gpa,
             .stats = PacketStats.init(),
             .running = false,
+            .connections = std.AutoHashMap(ConnectionId, Connection).init(gpa),
         };
     }
 
     pub fn deinit(self: *Self) void {
+        self.connections.deinit();
         std.posix.close(self.socket);
     }
 
     pub fn start(self: *Self) !void {
         var buffer: [65535]u8 = undefined;
         self.running = true;
+        var last_cleanup = std.time.timestamp();
 
         while (self.running) {
             const bytes_read = try std.posix.read(self.socket, &buffer);
             if (bytes_read > 0) {
-                self.parse_packet(buffer[0..bytes_read]);
+                try self.parse_packet(buffer[0..bytes_read]);
                 if (self.stats.total_packets % 10 == 0) {
                     self.stats.show();
+                    self.show_connections();
+                }
+
+                const now = std.time.timestamp();
+                if (now - last_cleanup >= 30) {
+                    self.cleanup_old_connections();
+                    last_cleanup = now;
                 }
             }
         }
     }
 
-    pub fn parse_packet(self: *Self, buffer: []const u8) void {
+    pub fn parse_packet(self: *Self, buffer: []const u8) !void {
         const ethernet = ParsedEthernet.init(buffer);
         if (ethernet == null) {
             return;
@@ -230,11 +247,23 @@ pub const NetworkMonitor = struct {
                             if (ParsedTcp.init(ipv4.payload)) |tcp| {
                                 const src_service = port.lookupPort(tcp.header.src_port, .tcp);
                                 const dest_service = port.lookupPort(tcp.header.dest_port, .tcp);
+
+                                const res = track_connection(
+                                    self,
+                                    ipv4,
+                                    tcp.header.src_port,
+                                    tcp.header.dest_port,
+                                    .tcp,
+                                    tcp.payload.len,
+                                );
+
+                                try self.connections.put(res.id, res.conn);
+
                                 print("TCP {}:{s} -> {}:{s}\n", .{
                                     tcp.header.src_port,
-                                    src_service orelse "",
+                                    src_service orelse "EPHEMERAL",
                                     tcp.header.dest_port,
-                                    dest_service orelse "",
+                                    dest_service orelse "EPHEMERAL",
                                 });
                             }
                         },
@@ -258,6 +287,74 @@ pub const NetworkMonitor = struct {
             else => {
                 self.stats.other_packets += 1;
             },
+        }
+    }
+
+    pub fn track_connection(
+        self: *Self,
+        ipv4: ParsedIpv4,
+        src_port: u16,
+        dest_port: u16,
+        protocol: Protocol,
+        payload_len: usize,
+    ) struct { id: ConnectionId, conn: Connection } {
+        const conn_id = ConnectionId{
+            .src_ip = ipv4.header.src_addr,
+            .dest_ip = ipv4.header.dest_addr,
+            .src_port = src_port,
+            .dest_port = dest_port,
+            .protocol = protocol,
+        };
+
+        const now = std.time.timestamp();
+
+        if (self.connections.get(conn_id)) |existing| {
+            var updated = existing;
+            updated.packets_sent += 1;
+            updated.bytes_sent += payload_len;
+            updated.last_seen = now;
+
+            return .{ .id = conn_id, .conn = updated };
+        }
+
+        const conn = Connection{
+            .id = conn_id,
+            .packets_sent = 1,
+            .bytes_sent = payload_len,
+            .first_seen = now,
+            .last_seen = now,
+        };
+
+        return .{ .id = conn_id, .conn = conn };
+    }
+
+    pub fn show_connections(self: *Self) void {
+        print("\nActive Connections:\n", .{});
+        var it = self.connections.iterator();
+
+        while (it.next()) |entry| {
+            const conn = entry.value_ptr.*;
+            print("{s} {}:{} -> {}:{} (packets: {}, bytes: {})\n", .{
+                @tagName(conn.id.protocol),
+                conn.id.src_ip,
+                conn.id.src_port,
+                conn.id.dest_ip,
+                conn.id.dest_port,
+                conn.packets_sent,
+                conn.bytes_sent,
+            });
+        }
+    }
+
+    pub fn cleanup_old_connections(self: *Self) void {
+        const now = std.time.timestamp();
+
+        var it = self.connections.iterator();
+        while (it.next()) |entry| {
+            const conn = entry.value_ptr.*;
+            if (now - conn.last_seen > CONNECTION_TIMEOUT_SECS) {
+                _ = self.connections.remove(conn.id);
+            }
         }
     }
 };
