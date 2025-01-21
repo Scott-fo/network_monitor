@@ -7,6 +7,8 @@ const EthernetHeader = headers.EthernetHeader;
 const MacAddress = headers.MacAddress;
 const IPv4Header = headers.IPv4Header;
 const IPv4Address = headers.IPv4Address;
+const TcpHeader = headers.TcpHeader;
+const UdpHeader = headers.UdpHeader;
 
 const ETH_P_ALL = 0x0003;
 const ETH_P_IP = 0x0800;
@@ -65,6 +67,57 @@ const ParsedIpv4 = struct {
                 .dest_addr = dest_addr,
             },
             .payload = buffer[@sizeOf(IPv4Header)..],
+        };
+    }
+};
+
+const ParsedTcp = struct {
+    const Self = @This();
+
+    header: TcpHeader,
+    payload: []const u8,
+
+    pub fn init(buffer: []const u8) ?Self {
+        if (buffer.len < @sizeOf(TcpHeader)) {
+            return null;
+        }
+
+        return Self{
+            .header = .{
+                .src_port = std.mem.readInt(u16, buffer[0..2], .big),
+                .dest_port = std.mem.readInt(u16, buffer[2..4], .big),
+                .sequence = std.mem.readInt(u32, buffer[4..8], .big),
+                .ack = std.mem.readInt(u32, buffer[8..12], .big),
+                .offset_reserved = buffer[12],
+                .flags = buffer[13],
+                .window = std.mem.readInt(u16, buffer[14..16], .big),
+                .checksum = std.mem.readInt(u16, buffer[16..18], .big),
+                .urgent = std.mem.readInt(u16, buffer[18..20], .big),
+            },
+            .payload = buffer[@sizeOf(TcpHeader)..],
+        };
+    }
+};
+
+const ParsedUdp = struct {
+    const Self = @This();
+
+    header: UdpHeader,
+    payload: []const u8,
+
+    pub fn init(buffer: []const u8) ?Self {
+        if (buffer.len < @sizeOf(UdpHeader)) {
+            return null;
+        }
+
+        return Self{
+            .header = .{
+                .src_port = std.mem.readInt(u16, buffer[0..2], .big),
+                .dest_port = std.mem.readInt(u16, buffer[2..4], .big),
+                .length = std.mem.readInt(u16, buffer[4..6], .big),
+                .checksum = std.mem.readInt(u16, buffer[6..8], .big),
+            },
+            .payload = buffer[@sizeOf(UdpHeader)..],
         };
     }
 };
@@ -169,6 +222,28 @@ pub const NetworkMonitor = struct {
                 if (ParsedIpv4.init(ethernet.?.payload)) |ipv4| {
                     print("From IP: {}\n", .{ipv4.header.src_addr});
                     print("To IP: {}\n", .{ipv4.header.dest_addr});
+
+                    switch (ipv4.header.protocol) {
+                        6 => {
+                            self.stats.tcp_packets += 1;
+                            if (ParsedTcp.init(ipv4.payload)) |tcp| {
+                                print("TCP - Port {} -> {}\n", .{
+                                    tcp.header.src_port,
+                                    tcp.header.dest_port,
+                                });
+                            }
+                        },
+                        17 => {
+                            self.stats.udp_packets += 1;
+                            if (ParsedUdp.init(ipv4.payload)) |udp| {
+                                print("UDP - Port {} -> {}\n", .{
+                                    udp.header.src_port,
+                                    udp.header.dest_port,
+                                });
+                            }
+                        },
+                        else => {},
+                    }
                 }
             },
             else => {
