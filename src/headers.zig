@@ -8,8 +8,8 @@ pub const IPv4Address = extern struct {
 
 /// Ethernet Frame Header
 /// +-------------------+------------------+----------------+
-/// | Destination MAC   | Source MAC      | EtherType      |
-/// | 6 bytes           | 6 bytes         | 2 bytes        |
+/// | Destination MAC   | Source MAC       | EtherType      |
+/// | 6 bytes           | 6 bytes          | 2 bytes        |
 /// +-------------------+------------------+----------------+
 /// EtherType values:
 /// - 0x0800: IPv4

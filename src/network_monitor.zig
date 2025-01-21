@@ -10,6 +10,9 @@ const IPv4Address = headers.IPv4Address;
 const TcpHeader = headers.TcpHeader;
 const UdpHeader = headers.UdpHeader;
 
+const port = @import("port.zig");
+const Protocol = port.Protocol;
+
 const ETH_P_ALL = 0x0003;
 const ETH_P_IP = 0x0800;
 
@@ -214,8 +217,6 @@ pub const NetworkMonitor = struct {
         self.stats.total_packets += 1;
         self.stats.total_bytes += buffer.len;
 
-        // print("EtherType: 0x{X:0>4}\n", .{ether_type});
-
         switch (ether_type) {
             ETH_P_IP => {
                 self.stats.ipv4_packets += 1;
@@ -227,18 +228,26 @@ pub const NetworkMonitor = struct {
                         6 => {
                             self.stats.tcp_packets += 1;
                             if (ParsedTcp.init(ipv4.payload)) |tcp| {
-                                print("TCP - Port {} -> {}\n", .{
+                                const src_service = port.lookupPort(tcp.header.src_port, .tcp);
+                                const dest_service = port.lookupPort(tcp.header.dest_port, .tcp);
+                                print("TCP {}:{s} -> {}:{s}\n", .{
                                     tcp.header.src_port,
+                                    src_service orelse "",
                                     tcp.header.dest_port,
+                                    dest_service orelse "",
                                 });
                             }
                         },
                         17 => {
                             self.stats.udp_packets += 1;
                             if (ParsedUdp.init(ipv4.payload)) |udp| {
-                                print("UDP - Port {} -> {}\n", .{
+                                const src_service = port.lookupPort(udp.header.src_port, .udp);
+                                const dest_service = port.lookupPort(udp.header.dest_port, .udp);
+                                print("udp {}:{s} -> {}:{s}\n", .{
                                     udp.header.src_port,
+                                    src_service orelse "EPHEMERAL",
                                     udp.header.dest_port,
+                                    dest_service orelse "EPHEMERAL",
                                 });
                             }
                         },
@@ -250,8 +259,5 @@ pub const NetworkMonitor = struct {
                 self.stats.other_packets += 1;
             },
         }
-
-        // print("From: {}\n", .{ethernet.?.header.src_mac});
-        // print("To: {}\n", .{ethernet.?.header.dest_mac});
     }
 };
